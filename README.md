@@ -136,6 +136,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m torch.distributed.launch --nproc_
 --finetune ./output_dir/checkpoint-799.pth
 ```
 
+- **Note:** Satmae++ uses the BGR image format for model training. You have to utilize the BGR format if you are finetuning using the provided pretraining weights. Otherwise it may degrade the performance of your model. Please refer to [issue](https://github.com/techmn/satmae_pp/issues/2)
 ------------------------------------------------------------------------------------
 
 ## Downstream Datasets
