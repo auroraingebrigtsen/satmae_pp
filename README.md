@@ -11,8 +11,9 @@ The SatMAE++ framework was introduced in ["Rethinking Transformers Pre-training 
 1. **Clone the forked SatMAE++ repository and install dependencies**
 
    ```bash
-   git clone https://github.com/auroraingebrigtsen/satmae_pp.git
-   cd satmae_pp
+    git clone https://github.com/yourname/INF367A-Solafune.git
+    cd INF367A-Solafune
+    git submodule update --init --recursive
     ```
 
 2. **Download the ViT-Large [pretrained weights](https://huggingface.co/mubashir04/checkpoint_ViT-L_pretrain_fmow_sentinel) from hugging face**
