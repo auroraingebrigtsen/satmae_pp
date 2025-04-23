@@ -8,15 +8,11 @@ The SatMAE++ framework was introduced in ["Rethinking Transformers Pre-training 
 
 ## Installation and Setup
 
-1. **Clone the SatMAE++ repository and install dependencies**
+1. **Clone the forked SatMAE++ repository and install dependencies**
 
    ```bash
-   git clone https://github.com/techmn/satmae_pp.git
+   git clone https://github.com/auroraingebrigtsen/satmae_pp.git
    cd satmae_pp
-   python -m venv .venv
-   source .venv/bin/activate    # Linux/macOS
-   # .\.venv\Scripts\activate   # Windows 
-   pip install -r requirements.txt
     ```
 
 2. **Download the ViT-Large [pretrained weights](https://huggingface.co/mubashir04/checkpoint_ViT-L_pretrain_fmow_sentinel) from hugging face**
@@ -38,12 +34,12 @@ The SatMAE++ framework was introduced in ["Rethinking Transformers Pre-training 
 To reproduce the finetuning run the following command
 
 ```bash
-python main_segmentation.py \
+python main_finetune_seg.py \
   --device cpu \
   --input_size 1024 \
   --patch_size 16 \
   --nb_classes 5 \
-  --finetune ./checkpoint_ViT-L_finetune_fmow_sentinel.pth \
+  --path/to/checkpoint_ViT-L_pretrain_fmow_sentinel.pth \
   --epochs 10 \
   --batch_size 8 \
   --mixup 0.0 \
