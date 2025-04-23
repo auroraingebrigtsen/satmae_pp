@@ -120,8 +120,8 @@ def evaluate(data_loader, model, device, num_classes):
     model.eval()
 
     for batch in metric_logger.log_every(data_loader, 10, header):
-        images = batch['image'].to(device, non_blocking=True)  # (B, C, H, W)
-        masks  = batch['mask'].to(device,  non_blocking=True)  # (B, H, W)
+        images = batch['image'].to(device, dtype=torch.float32, non_blocking=True)  # (B, C, H, W)
+        masks  = batch['mask'].to(device, dtype=torch.long, non_blocking=True)  # (B, H, W)
 
         with torch.cuda.amp.autocast():
             logits = model(images)                # (B, K, H, W)

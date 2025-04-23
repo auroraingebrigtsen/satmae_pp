@@ -230,6 +230,18 @@ def main(args):
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
 
+                # After loading your model…
+        for p in model.parameters():
+            p.requires_grad = False
+
+        # unfreeze last 4 transformer blocks
+        for i in range(20, 24):
+            for p in model.blocks[i].parameters():
+                p.requires_grad = True
+        # Unfreeze just the head
+        for p in model.seg_head.parameters():
+            p.requires_grad = True
+
         # TODO: change assert msg based on patch_embed
         if args.global_pool:
             print(set(msg.missing_keys))
@@ -269,7 +281,10 @@ def main(args):
     param_groups = lrd.param_groups_lrd(model_without_ddp, args.weight_decay,
                                         no_weight_decay_list=model_without_ddp.no_weight_decay(),
                                         layer_decay=args.layer_decay)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=args.lr, weight_decay=args.weight_decay
+    )
     loss_scaler = NativeScaler()
     criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
 
@@ -286,14 +301,14 @@ def main(args):
     '''
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, num_classes=args.nb_classes)
         print(f"Evaluation on {len(dataset_val)} test images- acc1: {test_stats['acc1']:.2f}%, "
               f"acc5: {test_stats['acc5']:.2f}%")
         exit(0)
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    max_accuracy = 0.0
+    max_miou = 0.0
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
@@ -311,15 +326,14 @@ def main(args):
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)
 
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, num_classes=args.nb_classes)
 
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
-        max_accuracy = max(max_accuracy, test_stats["acc1"])
-        print(f'Max accuracy: {max_accuracy:.2f}%')
+        print(f"Mean IoU on the {len(dataset_val)} test images: {test_stats['mIoU']:.3f}")
+        max_miou = max(max_miou, test_stats["mIoU"])    
+        print(f"Max mIoU: {max_miou:.3f}")
 
         if log_writer is not None:
-            log_writer.add_scalar('perf/test_acc1', test_stats['acc1'], epoch)
-            log_writer.add_scalar('perf/test_acc5', test_stats['acc5'], epoch)
+            log_writer.add_scalar('perf/test_miou', test_stats['mIoU'], epoch)
             log_writer.add_scalar('perf/test_loss', test_stats['loss'], epoch)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
