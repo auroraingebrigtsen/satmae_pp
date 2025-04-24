@@ -26,10 +26,10 @@ from util.datasets_finetune_deforestation import build_deforestation_datasets
 from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
-from models_vit_seg import vit_seg_large_patch16
+from models_vit import vit_seg_large_patch16
 
 
-from engine_seg import (train_one_epoch, evaluate)
+from engine_finetune import (train_one_epoch, evaluate)
 
 
 def get_args_parser():
