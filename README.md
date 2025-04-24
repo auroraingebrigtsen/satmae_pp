@@ -1,19 +1,25 @@
 # SatMAE++ Implementation
 
-# Overview
+## Overview
 
-The SatMAE++ framework was introduced in ["Rethinking Transformers Pre-training for Multi-Spectral Satellite Imagery"](https://arxiv.org/abs/2403.05419) (Noman et al., 2024). This folder contains the code, installation and setup guide necessary for running the finetuning part of the framework on the Solafune deforestation drivers competition. I use the pretrained model with weights provided by the authors on GitHub at [techmn/satmae_pp.](https://github.com/techmn/satmae_pp).
+The SatMAE++ framework was introduced in ["Rethinking Transformers Pre-training for Multi-Spectral Satellite Imagery"](https://arxiv.org/abs/2403.05419) (Noman et al., 2024). This submodule contains the code, installation and setup guide necessary for running the finetuning part of the framework on the Solafune deforestation drivers competition. I use the pretrained model with weights provided by the authors on GitHub at [techmn/satmae_pp.](https://github.com/techmn/satmae_pp).
 
 <img width="1096" alt="image" src="images/overall_architecture.png">
 
+## Method
+
+
+
+
 ## Installation and Setup
 
-1. **Clone the forked SatMAE++ repository and install dependencies**
+1. **Add the forked SatMAE++ repository as a submodule**
 
    ```bash
    git submodule add https://github.com/auroraingebrigtsen/satmae_pp.git satmae_pp
    cd satmae_pp
     ```
+    Ensure dependencies is installed by the global requirements.txt
 
 2. **Download the ViT-Large [pretrained weights](https://huggingface.co/mubashir04/checkpoint_ViT-L_pretrain_fmow_sentinel) from hugging face**
     ```bash
@@ -22,18 +28,12 @@ The SatMAE++ framework was introduced in ["Rethinking Transformers Pre-training 
     ```
 
 3. **Move the weights into the repo**
-    ```bash
-    mv checkpoint_ViT-L_pretrain_fmow_sentinel.pth .
-    ```
-
-4. **Copy custom scripts into the repo**<br>
-    Copy the custom engine, entrypoint and models from this folder into the satmae_pp folder.
 
 
 ## Usage
 To reproduce the finetuning run the following command
 
-```bash
+```bash LINUX
 python main_finetune_seg.py \
   --device cpu \
   --input_size 1024 \
@@ -44,9 +44,10 @@ python main_finetune_seg.py \
   --batch_size 8 \
   --mixup 0.0 \
   --cutmix 0.0
+
+  WINDOWS
 ```
 
-Alternatively, load the finetuned weights from PATH.
 
 ## Citation
 
