@@ -19,16 +19,14 @@ import timm
 assert timm.__version__ >= "0.3.2" 
 from timm.models.layers import trunc_normal_
 from timm.data.mixup import Mixup
-from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 
 import util.lr_decay as lrd
 import util.misc as misc
-from util.datasets_finetune import build_fmow_dataset
+from util.datasets_finetune_deforestation import build_deforestation_datasets
 from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
-import models_vit
-import models_vit_group_channels
+from models_vit_seg import vit_seg_large_patch16
 
 
 from engine_finetune import (train_one_epoch, evaluate)
@@ -43,10 +41,6 @@ def get_args_parser():
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
     # Model parameters
-    parser.add_argument('--model_type', default='group_c', choices=['group_c', 'vanilla'],
-                        help='Use channel model')
-    parser.add_argument('--model', default='vit_large_patch16', type=str, metavar='MODEL',
-                        help='Name of model to train')
     parser.add_argument('--input_size', default=96, type=int, help='images input size')
     parser.add_argument('--patch_size', default=8, type=int, help='patch embedding patch size')
     parser.add_argument('--drop_path', type=float, default=0.2, metavar='PCT', help='Drop path rate (default: 0.1)')
@@ -97,22 +91,7 @@ def get_args_parser():
     parser.add_argument('--cls_token', action='store_false', dest='global_pool',
                         help='Use class token instead of global pool for classification')
 
-    # Dataset parameters
-    parser.add_argument('--base_path', default='dataset/eurosat/2750/', type=str, help='dataset folder path') # for euorsat dataset
-    parser.add_argument('--train_path', default='dataset/fmow_sentinel/train.csv', type=str,
-                        help='Train .csv path')
-    parser.add_argument('--test_path', default='dataset/fmow_sentinel/val.csv', type=str,
-                        help='Test .csv path')
-    parser.add_argument('--dataset_type', default='sentinel', choices=['rgb', 'sentinel', 'euro_sat', 'resisc', 'ucmerced'],
-                        help='Whether to use fmow rgb, sentinel, or other dataset.')
-    parser.add_argument('--masked_bands', default=None, nargs='+', type=int,
-                        help='Sequence of band indices to mask (with mean val) in sentinel dataset')
-    parser.add_argument('--dropped_bands', type=int, nargs='+', default=None,
-                        help="Which bands (0 indexed) to drop from sentinel data.")
-    parser.add_argument('--grouped_bands', type=int, nargs='+', action='append',
-                        default=[], help="Bands to group for GroupC vit")
-
-    parser.add_argument('--nb_classes', default=62, type=int, help='number of the classification types') # 62 classes for fmow (rgb or sentinel)
+    parser.add_argument('--nb_classes', default=5, type=int, help='number of the classification types') # 5 classes
     parser.add_argument('--output_dir', default='./finetune_logs', help='path where to save, empty for no saving')
     parser.add_argument('--log_dir', default='./finetune_logs', help='path where to tensorboard log')
     parser.add_argument('--device', default='cuda', help='device to use for training / testing')
@@ -125,7 +104,7 @@ def get_args_parser():
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
     parser.add_argument('--dist_eval', action='store_true', default=False,
                         help='Enabling distributed evaluation (recommended during training for faster monitor')
-    parser.add_argument('--num_workers', default=16, type=int)
+    parser.add_argument('--num_workers', default=0, type=int)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -155,8 +134,7 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train = build_fmow_dataset(is_train=True, args=args)
-    dataset_val = build_fmow_dataset(is_train=False, args=args)
+    dataset_train, dataset_val = build_deforestation_datasets(seed=seed)
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
@@ -211,28 +189,15 @@ def main(args):
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
     
-    # Define the model
-    if args.model_type == 'group_c':
-        # Workaround because action append will add to default list
-        if len(args.grouped_bands) == 0:
-            args.grouped_bands = [[0, 1, 2, 6], [3, 4, 5, 7], [8, 9]]
-
-        print(f"Grouping bands {args.grouped_bands}")
-
-        model = models_vit_group_channels.__dict__[args.model](
-            patch_size=args.patch_size, img_size=args.input_size, in_chans=dataset_train.in_c,
-            channel_groups=args.grouped_bands, num_classes=args.nb_classes,
-            drop_path_rate=args.drop_path, global_pool=args.global_pool
-        )
-
-    else:
-        model = models_vit.__dict__[args.model](
-            patch_size=args.patch_size, img_size=args.input_size, in_chans=dataset_train.in_c,
-            num_classes=args.nb_classes, drop_path_rate=args.drop_path, global_pool=args.global_pool,
-        )
+    model = vit_seg_large_patch16(
+        num_classes=args.nb_classes,
+        patch_size=args.patch_size,
+        img_size=args.input_size,
+        drop_path_rate=args.drop_path
+    )
     
     if args.finetune and not args.eval:
-        checkpoint = torch.load(args.finetune, map_location='cpu')
+        checkpoint = torch.load(args.finetune, map_location='cpu', weights_only=False)
 
         print("Load pre-trained checkpoint from: %s" % args.finetune)
         checkpoint_model = checkpoint['model']
@@ -246,10 +211,17 @@ def main(args):
         #         model.patch_embed.proj.weight.data[:, :3, :, :] = ckpt_patch_embed_weight.data[:, :3, :, :]
 
         # TODO: Do something smarter?
-        for k in ['pos_embed', 'patch_embed.proj.weight', 'patch_embed.proj.bias', 'head.weight', 'head.bias']:
-            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
+        for k in ['pos_embed',
+                'patch_embed.proj.weight', 'patch_embed.proj.bias',
+                # drop the old cls‐head keys (they don’t exist on your seg model)
+                'head.weight', 'head.bias',
+                # and also drop any fc_norm if you had global_pool
+                'fc_norm.weight', 'fc_norm.bias']:
+            if k in checkpoint_model and (k not in state_dict or
+                                        checkpoint_model[k].shape != state_dict[k].shape):
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
+
         
         # interpolate position embedding
         interpolate_pos_embed(model, checkpoint_model)
@@ -267,7 +239,7 @@ def main(args):
             # assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
 
         # manually initialize fc layer
-        trunc_normal_(model.head.weight, std=2e-5)
+        trunc_normal_(model.seg_head.weight, std=2e-5)
     
 
     model.to(device)
@@ -299,14 +271,7 @@ def main(args):
                                         layer_decay=args.layer_decay)
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
     loss_scaler = NativeScaler()
-
-    if mixup_fn is not None:
-        # smoothing is handled with mixup label transform
-        criterion = SoftTargetCrossEntropy()
-    elif args.smoothing > 0.:
-        criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
-    else:
-        criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
 
     print("criterion = %s" % str(criterion))
 

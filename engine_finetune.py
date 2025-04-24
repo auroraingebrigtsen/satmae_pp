@@ -44,9 +44,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
 
-        images, targets = samples['img'], samples['label']
-        images = images.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
+        images, targets = samples['image'], samples['mask']
+        images = images.to(device, dtype=torch.float32, non_blocking=True)
+        targets = targets.to(device, dtype=torch.long,  non_blocking=True)
 
         if mixup_fn is not None:
             images, targets = mixup_fn(images, targets)
@@ -54,6 +54,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         with torch.cuda.amp.autocast():
             outputs = model(images)
             loss = criterion(outputs, targets)
+
 
         loss_value = loss.item()
 
@@ -68,7 +69,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if (data_iter_step + 1) % accum_iter == 0:
             optimizer.zero_grad()
 
-        torch.cuda.synchronize()
+        if device.type == 'cuda' and torch.cuda.is_initialized():
+            torch.cuda.synchronize()
 
         metric_logger.update(loss=loss_value)
         min_lr = 10.
@@ -106,37 +108,39 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
+def evaluate(data_loader, model, device, num_classes):
+    """
+    Run the model on the validation set and compute pixel Cross-Entropy loss
+    plus mean IoU over all classes.
+    """
     criterion = torch.nn.CrossEntropyLoss()
-
     metric_logger = misc.MetricLogger(delimiter="  ")
-    header = 'Test:'
+    header = 'Val:'
 
-    # switch to evaluation mode
     model.eval()
 
     for batch in metric_logger.log_every(data_loader, 10, header):
+        images = batch['image'].to(device, non_blocking=True)  # (B, C, H, W)
+        masks  = batch['mask'].to(device,  non_blocking=True)  # (B, H, W)
 
-        images, target = batch['img'], batch['label']
-        images = images.to(device, non_blocking=True)
-        target = target.to(device, non_blocking=True)
-
-        # compute output
         with torch.cuda.amp.autocast():
-            output = model(images)
-            loss = criterion(output, target)
+            logits = model(images)                # (B, K, H, W)
+            loss   = criterion(logits, masks)
 
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        # Predictions and per-class IoU
+        preds = logits.argmax(dim=1)             # (B, H, W)
+        iou_list = []
+        for cls in range(num_classes):
+            pred_inds   = (preds == cls)
+            target_inds = (masks == cls)
+            inter = (pred_inds & target_inds).sum().float()
+            union = (pred_inds | target_inds).sum().float()
+            iou_list.append(inter / union if union > 0 else torch.tensor(1.0, device=device))
+        mIoU = torch.mean(torch.stack(iou_list)).item()
 
-        batch_size = images.shape[0]
-        metric_logger.update(loss=loss.item())
-        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
-        
-    # gather the stats from all processes
+        metric_logger.update(loss=loss.item(), mIoU=mIoU)
+
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
-          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+    print(f'* Mean IoU {metric_logger.mIoU.global_avg:.3f}  Loss {metric_logger.loss.global_avg:.3f}')
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-

@@ -11,7 +11,7 @@ The SatMAE++ framework was introduced in ["Rethinking Transformers Pre-training 
 1. **Clone the forked SatMAE++ repository and install dependencies**
 
    ```bash
-   git clone https://github.com/auroraingebrigtsen/satmae_pp.git
+   git submodule add https://github.com/auroraingebrigtsen/satmae_pp.git satmae_pp
    cd satmae_pp
     ```
 
