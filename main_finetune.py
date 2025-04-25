@@ -7,6 +7,7 @@ import datetime
 import json
 import numpy as np
 import os
+import sys
 import time
 #import wandb
 from pathlib import Path
@@ -22,7 +23,7 @@ from timm.data.mixup import Mixup
 
 import util.lr_decay as lrd
 import util.misc as misc
-from util.datasets_finetune_deforestation import build_deforestation_datasets
+from util.dataset_finetune_deforestation import build_deforestation_datasets
 from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
@@ -30,6 +31,9 @@ from models_vit import vit_seg_large_patch16
 
 
 from engine_finetune import (train_one_epoch, evaluate)
+
+sys.path.insert(0, os.path.abspath(os.path.join(__file__, "..", "..")))
+from deforestation_dataset import build_deforestation_datasets
 
 
 def get_args_parser():
@@ -40,9 +44,20 @@ def get_args_parser():
     parser.add_argument('--accum_iter', default=16, type=int,
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
+    parser.add_argument(
+        '--images_path',
+        type=str,
+        help='Path to folder containing all input .tif images'
+    )
+    parser.add_argument(
+        '--masked_images_path',
+        type=str,
+        help='Path to folder containing all mask .tif files'
+    )
     # Model parameters
-    parser.add_argument('--input_size', default=96, type=int, help='images input size')
-    parser.add_argument('--patch_size', default=8, type=int, help='patch embedding patch size')
+    parser.add_argument('--input_size', default=1024, type=int, help='images input size')
+    parser.add_argument('--in_chans', default=12, type=int, help='input channels')
+    parser.add_argument('--patch_size', default=64, type=int, help='patch embedding patch size')
     parser.add_argument('--drop_path', type=float, default=0.2, metavar='PCT', help='Drop path rate (default: 0.1)')
 
     # Optimizer parameters
@@ -50,13 +65,11 @@ def get_args_parser():
                         help='Clip gradient norm (default: None, no clipping)')
     parser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
     parser.add_argument('--lr', type=float, default=None, metavar='LR', help='learning rate (absolute lr)')
-    parser.add_argument('--blr', type=float, default=2e-4, metavar='LR',
-                        help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
-    parser.add_argument('--layer_decay', type=float, default=0.75, help='layer-wise lr decay from ELECTRA/BEiT')
     parser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR',
-                        help='lower lr bound for cyclic schedulers that hit 0')
-    parser.add_argument('--warmup_epochs', type=int, default=5, metavar='N',
+                    help='lower lr bound for cyclic schedulers that hit 0')
+    parser.add_argument('--warmup_epochs', type=int, default=1, metavar='N',
                         help='epochs to warmup LR')
+
 
     # Augmentation parameters
     parser.add_argument('--color_jitter', type=float, default=None, metavar='PCT',
@@ -132,7 +145,7 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train, dataset_val = build_deforestation_datasets(seed=seed)
+    dataset_train, dataset_val = build_deforestation_datasets(seed=seed, images_dir=args.images_path, masks_dir=args.masked_images_path)
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
@@ -191,6 +204,7 @@ def main(args):
         num_classes=args.nb_classes,
         patch_size=args.patch_size,
         img_size=args.input_size,
+        in_chans=args.in_chans,
         drop_path_rate=args.drop_path
     )
     
@@ -201,14 +215,6 @@ def main(args):
         checkpoint_model = checkpoint['model']
         state_dict = model.state_dict()
 
-        # if 'patch_embed.proj.weight' in checkpoint_model and 'patch_embed.proj.weight' in state_dict:
-        #     ckpt_patch_embed_weight = checkpoint_model['patch_embed.proj.weight']
-        #     model_patch_embed_weight = state_dict['patch_embed.proj.weight']
-        #     if ckpt_patch_embed_weight.shape[1] != model_patch_embed_weight.shape[1]:
-        #         print('Using 3 channels of ckpt patch_embed')
-        #         model.patch_embed.proj.weight.data[:, :3, :, :] = ckpt_patch_embed_weight.data[:, :3, :, :]
-
-        # TODO: Do something smarter?
         for k in ['pos_embed',
                 'patch_embed.proj.weight', 'patch_embed.proj.bias',
                 # drop the old cls‐head keys (they don’t exist on your seg model)
@@ -229,16 +235,16 @@ def main(args):
         print(msg)
 
                 # After loading your model…
-        for p in model.parameters():
-            p.requires_grad = False
+        # for p in model.parameters():
+        #     p.requires_grad = False
 
-        # unfreeze last 2 transformer blocks
-        for i in range(22, 24):
-            for p in model.blocks[i].parameters():
-                p.requires_grad = True
-        # Unfreeze just the head
-        for p in model.seg_head.parameters():
-            p.requires_grad = True
+        # # unfreeze last 2 transformer blocks
+        # for i in range(22, 24):
+        #     for p in model.blocks[i].parameters():
+        #         p.requires_grad = True
+        # # Unfreeze just the head
+        # for p in model.seg_head.parameters():
+        #     p.requires_grad = True
 
         # TODO: change assert msg based on patch_embed
         if args.global_pool:
@@ -262,10 +268,6 @@ def main(args):
 
     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
 
-    if args.lr is None:  # only base_lr is specified
-        args.lr = args.blr * eff_batch_size / 256
-
-    print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
     print("actual lr: %.2e" % args.lr)
 
     print("accumulate grad iterations: %d" % args.accum_iter)
@@ -280,7 +282,7 @@ def main(args):
         lr=args.lr, weight_decay=args.weight_decay
     )
     loss_scaler = NativeScaler()
-    criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
+    criterion = torch.nn.CrossEntropyLoss()
 
     print("criterion = %s" % str(criterion))
 

@@ -70,53 +70,63 @@ class SatelliteDataset(Dataset):
 #########################################################
 # Deforestation (Sentinel)
 #########################################################
+import os
+from glob import glob
 import torch
 from torch.utils.data import Dataset, random_split
-import os, sys
-sys.path.insert(0, os.path.abspath(os.path.join(__file__, "..", "..", "..")))
-from utils.preprocessing import get_processed_data
+import rasterio
+import numpy as np
 
 class DeforestationDataset(SatelliteDataset):
     """
-    Wraps a TensorDataset of (img_tensor, mask_tensor) tuples
-    and simply returns them—no extra transform needed.
+    File-based per-pixel segmentation dataset.
+    Lazily loads one image + mask pair from disk per __getitem__.
     """
-    def __init__(self, tensor_dataset: torch.utils.data.TensorDataset):
-        # in_c should match number of channels in your processed images (e.g. 12)
+    def __init__(self, image_paths, mask_paths):
+        # in_c should match the number of bands in your TIFFs (e.g. 12)
         super().__init__(in_c=12)
-        self.ds = tensor_dataset
+        assert len(image_paths) == len(mask_paths)
+        self.images = image_paths
+        self.masks  = mask_paths
 
     def __len__(self):
-        return len(self.ds)
+        return len(self.images)
 
     def __getitem__(self, idx):
-        img, mask = self.ds[idx]
-        return {
-            'image': img,
-            'mask' : mask
-        }
+        # load image (C, H, W)
+        with rasterio.open(self.images[idx]) as src:
+            img = src.read().astype(np.float32)
+        # load mask (H, W)
+        with rasterio.open(self.masks[idx]) as src:
+            mask = src.read(1).astype(np.int64)
+
+        # return as dict to match your training loop
+        return { 'image': torch.from_numpy(img), 
+                 'mask' : torch.from_numpy(mask) }
 
 def build_deforestation_datasets(
     train_ratio: float = 0.8,
-    seed: float = 42
+    seed: int = 42
 ):
     """
-    Splits the single TensorDataset from get_processed_data() into train/val
-    and wraps each in our DeforestationDataset.
+    Uses get_processed_data() (which returns a TensorDataset of ALL your
+    (image,mask) pairs), splits it into train+val subsets, and returns
+    two small Dataset wrappers that yield {'image', 'mask'} dicts.
     """
-    # 1) Get the full TensorDataset of (img, mask)
-    full_ds = get_processed_data(subset=True)
+    # 1) load the full TensorDataset of (img, mask)
+    full_ds = get_processed_data()   # <-- unchanged!
 
-    # 2) Compute lengths & split
+    # 2) split lengths
     total = len(full_ds)
-    train_len = int(total * train_ratio)
-    val_len   = total - train_len
-    g = torch.Generator().manual_seed(seed)
-    train_tds, val_tds = random_split(full_ds, [train_len, val_len], generator=g)
+    train_n = int(total * train_ratio)
+    val_n   = total - train_n
 
-    # 3) Wrap in our simple Dataset
+    # 3) random split with a fixed seed for reproducibility
+    generator = torch.Generator().manual_seed(seed)
+    train_tds, val_tds = random_split(full_ds, [train_n, val_n], generator=generator)
+
+    # 4) wrap each Subset in your simple DeforestationDataset so it returns dicts
     train_ds = DeforestationDataset(train_tds)
     val_ds   = DeforestationDataset(val_tds)
 
     return train_ds, val_ds
-

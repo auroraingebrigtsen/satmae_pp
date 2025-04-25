@@ -10,11 +10,11 @@ class VisionTransformerSeg(_VisionTransformer):
     """
     Extends the VisionTransformer to produce a segmentation map via a 1x1 conv head.
     """
-    def __init__(self, num_classes, patch_size, img_size, **kwargs):
+    def __init__(self, num_classes, patch_size, img_size, in_chans, **kwargs):
         super().__init__(
             img_size=img_size,   # ← forward this
             patch_size=patch_size, # ← and this
-            in_chans=12,    # ← and the channel count
+            in_chans=in_chans,    # ← and the channel count
             **kwargs             # your embed_dim, depth, num_heads, etc.
         )
         # reinitialize positional embedding to 2D sincos
@@ -56,22 +56,24 @@ class VisionTransformerSeg(_VisionTransformer):
         )
 
 
-def vit_seg_base_patch16(num_classes, patch_size, img_size, **kwargs):
+def vit_seg_base_patch16(num_classes, patch_size, img_size, in_chans, **kwargs):
     return VisionTransformerSeg(
         embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         num_classes=num_classes,
         patch_size=patch_size,
         img_size=img_size,
+        in_chans=in_chans,
         **kwargs
     )
 
-def vit_seg_large_patch16(num_classes, patch_size, img_size, **kwargs):
+def vit_seg_large_patch16(num_classes, patch_size, img_size, in_chans,**kwargs):
     return VisionTransformerSeg(
         embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         num_classes=num_classes,
         patch_size=patch_size,
         img_size=img_size,
+        in_chans=in_chans,
         **kwargs
     )
