@@ -234,8 +234,8 @@ def main(args):
         for p in model.parameters():
             p.requires_grad = False
 
-        # unfreeze last 4 transformer blocks
-        for i in range(20, 24):
+        # unfreeze last 2 transformer blocks
+        for i in range(22, 24):
             for p in model.blocks[i].parameters():
                 p.requires_grad = True
         # Unfreeze just the head
