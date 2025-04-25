@@ -130,7 +130,7 @@ def evaluate(data_loader, model, device, num_classes):
         # Predictions and per-class IoU
         preds = logits.argmax(dim=1)             # (B, H, W)
         iou_list = []
-        for cls in range(num_classes):
+        for cls in range(1, num_classes):
             pred_inds   = (preds == cls)
             target_inds = (masks == cls)
             inter = (pred_inds & target_inds).sum().float()
