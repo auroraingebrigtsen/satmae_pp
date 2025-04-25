@@ -88,8 +88,6 @@ def get_args_parser():
     parser.add_argument('--finetune', default='./output_dir/checkpoint-50.pth', help='finetune from checkpoint')
     parser.add_argument('--global_pool', action='store_true')
     parser.set_defaults(global_pool=True)
-    parser.add_argument('--cls_token', action='store_false', dest='global_pool',
-                        help='Use class token instead of global pool for classification')
 
     parser.add_argument('--nb_classes', default=5, type=int, help='number of the classification types') # 5 classes
     parser.add_argument('--output_dir', default='./finetune_logs', help='path where to save, empty for no saving')
@@ -277,10 +275,6 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
-    # build optimizer with layer-wise lr decay (lrd)
-    param_groups = lrd.param_groups_lrd(model_without_ddp, args.weight_decay,
-                                        no_weight_decay_list=model_without_ddp.no_weight_decay(),
-                                        layer_decay=args.layer_decay)
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr, weight_decay=args.weight_decay
@@ -292,13 +286,6 @@ def main(args):
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 
-    # Set up wandb
-    '''
-    if global_rank == 0 and args.wandb is not None:
-        wandb.init(project=args.wandb, entity="mae-sentinel")
-        wandb.config.update(args)
-        wandb.watch(model)
-    '''
 
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device, num_classes=args.nb_classes)
@@ -347,17 +334,14 @@ def main(args):
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
             
-            '''
-            if args.wandb is not None:
-                try:
-                    wandb.log(log_stats)
-                except ValueError:
-                    print(f"Invalid stats?")
-            '''
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+
+    if misc.is_main_process():
+        torch.save(model.state_dict(), os.path.join(args.output_dir, "checkpoint-final.pth"))
+
 
 
 if __name__ == '__main__':
